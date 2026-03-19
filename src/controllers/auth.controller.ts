@@ -17,7 +17,7 @@ export const register = async (req: Request, res: Response) => {
     }
 
     // Validasi nomor telepon
-    if (phone.trim().length < 10) {
+    if (!phone || phone.toString().trim().length < 10) {
       return res.status(400).json({
         message: 'Nomor telepon tidak valid (minimal 10 digit)'
       });
@@ -90,19 +90,25 @@ export const register = async (req: Request, res: Response) => {
       [email, otpCode, expiresAt]
     );
 
-    // Try sending email, but don't fail if it doesn't work
+    // Send OTP email
     console.log(`📧 OTP Code for ${email}: ${otpCode}`);
-    sendOTPEmail(email, otpCode).catch((err) => {
-      console.warn('⚠️ Failed to send OTP email:', err.message);
-    });
+    try {
+      await sendOTPEmail(email, otpCode);
+      console.log(`✅ OTP email sent successfully to ${email}`);
+    } catch (emailErr: any) {
+      console.error(`❌ Failed to send OTP email to ${email}:`, emailErr.message);
+    }
 
     res.status(201).json({
       message: 'Kode OTP telah dikirim ke email Anda',
       data: { email, requiresVerification: true },
     });
-  } catch (error) {
-    console.error('Register error:', error);
-    res.status(500).json({ message: 'Terjadi kesalahan server' });
+  } catch (error: any) {
+    console.error('Register error:', error.message, error.stack);
+    res.status(500).json({
+      message: 'Terjadi kesalahan server',
+      error: process.env.NODE_ENV !== 'production' ? error.message : undefined,
+    });
   }
 };
 
