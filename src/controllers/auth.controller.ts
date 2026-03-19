@@ -51,11 +51,14 @@ export const register = async (req: Request, res: Response) => {
           [email, otpCode, expiresAt]
         );
 
-        // Try sending email, but don't fail if it doesn't work
+        // Send OTP email
         console.log(`📧 OTP Code for ${email}: ${otpCode}`);
-        sendOTPEmail(email, otpCode).catch((err) => {
-          console.warn('⚠️ Failed to send OTP email:', err.message);
-        });
+        try {
+          await sendOTPEmail(email, otpCode);
+          console.log(`✅ OTP email sent successfully to ${email}`);
+        } catch (emailErr: any) {
+          console.error(`❌ Failed to send OTP email to ${email}:`, emailErr.message);
+        }
 
         return res.status(201).json({
           message: 'Kode OTP telah dikirim ke email Anda',
