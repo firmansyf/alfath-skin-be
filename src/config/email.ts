@@ -27,6 +27,9 @@ const initTransporter = async () => {
         user: smtpUser,
         pass: smtpPass,
       },
+      tls: {
+        rejectUnauthorized: false,
+      },
     });
 
     try {
@@ -35,7 +38,17 @@ const initTransporter = async () => {
       return;
     } catch (error: any) {
       console.error('❌ SMTP verification failed:', error.message);
-      console.log('📧 Falling back to Ethereal test account...');
+      console.error('❌ SMTP config used:', {
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: process.env.SMTP_PORT || '587',
+        user: smtpUser.substring(0, 5) + '***',
+      });
+      // Do NOT fall back to Ethereal in production — keep transporter as null so error is explicit
+      if (process.env.NODE_ENV === 'production') {
+        console.error('❌ Email will NOT be sent. Fix SMTP config in Railway environment variables.');
+        return;
+      }
+      console.log('📧 Falling back to Ethereal test account (dev only)...');
       transporter = null;
     }
   } else {

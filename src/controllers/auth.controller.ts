@@ -58,6 +58,9 @@ export const register = async (req: Request, res: Response) => {
           console.log(`✅ OTP email sent successfully to ${email}`);
         } catch (emailErr: any) {
           console.error(`❌ Failed to send OTP email to ${email}:`, emailErr.message);
+          return res.status(500).json({
+            message: 'Gagal mengirim email OTP. Silakan coba lagi nanti.',
+          });
         }
 
         return res.status(201).json({
@@ -97,6 +100,9 @@ export const register = async (req: Request, res: Response) => {
       console.log(`✅ OTP email sent successfully to ${email}`);
     } catch (emailErr: any) {
       console.error(`❌ Failed to send OTP email to ${email}:`, emailErr.message);
+      return res.status(500).json({
+        message: 'Gagal mengirim email OTP. Silakan coba lagi nanti.',
+      });
     }
 
     res.status(201).json({
