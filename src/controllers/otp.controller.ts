@@ -62,20 +62,14 @@ export const sendOTP = async (req: Request, res: Response) => {
       [email, otpCode, expiresAt]
     );
 
-    // Send OTP email
-    console.log(`📧 OTP Code for ${email}: ${otpCode}`);
-    try {
-      await sendOTPEmail(email, otpCode);
-      console.log(`✅ OTP email sent successfully to ${email}`);
-    } catch (emailErr: any) {
-      console.error(`❌ Failed to send OTP email to ${email}:`, emailErr.message);
-      return res.status(500).json({
-        message: 'Gagal mengirim email OTP. Silakan coba lagi nanti.',
-      });
-    }
-
+    // Respond immediately, send email in background
     res.json({
       message: 'Kode OTP telah dikirim ke email Anda',
+    });
+
+    console.log(`📧 OTP Code for ${email}: ${otpCode}`);
+    sendOTPEmail(email, otpCode).catch((emailErr: any) => {
+      console.error(`❌ Failed to send OTP email to ${email}:`, emailErr.message);
     });
   } catch (error) {
     console.error('Send OTP error:', error);
