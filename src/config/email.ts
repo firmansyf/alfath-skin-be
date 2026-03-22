@@ -4,22 +4,24 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export const sendOTPEmail = async (email: string, otpCode: string): Promise<void> => {
-  const gmailUser = process.env.GMAIL_USER;
-  const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
+  const brevoUser = process.env.BREVO_SMTP_USER;
+  const brevoPassword = process.env.BREVO_SMTP_PASSWORD;
 
-  if (!gmailUser || !gmailAppPassword) {
-    throw new Error('GMAIL_USER or GMAIL_APP_PASSWORD environment variable is not set');
+  if (!brevoUser || !brevoPassword) {
+    throw new Error('BREVO_SMTP_USER or BREVO_SMTP_PASSWORD environment variable is not set');
   }
 
   const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp-relay.brevo.com',
+    port: 587,
+    secure: false,
     auth: {
-      user: gmailUser,
-      pass: gmailAppPassword,
+      user: brevoUser,
+      pass: brevoPassword,
     },
   });
 
-  const from = process.env.SMTP_FROM || gmailUser;
+  const from = process.env.SMTP_FROM || brevoUser;
 
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
@@ -45,7 +47,7 @@ export const sendOTPEmail = async (email: string, otpCode: string): Promise<void
     </div>
   `;
 
-  console.log(`📧 Sending OTP to ${email} via Gmail...`);
+  console.log(`📧 Sending OTP to ${email} via Brevo...`);
 
   await transporter.sendMail({
     from: `Alfath Skin <${from}>`,
