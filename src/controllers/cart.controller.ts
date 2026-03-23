@@ -7,18 +7,13 @@ export const getCart = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
 
-    // Get or create cart
-    let cart = await query(
-      'SELECT * FROM carts WHERE user_id = $1',
+    // Get or create cart (single upsert query)
+    const cart = await query(
+      `INSERT INTO carts (user_id) VALUES ($1)
+       ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+       RETURNING *`,
       [userId]
     );
-
-    if (cart.rows.length === 0) {
-      cart = await query(
-        'INSERT INTO carts (user_id) VALUES ($1) RETURNING *',
-        [userId]
-      );
-    }
 
     const cartId = cart.rows[0].id;
 
@@ -85,18 +80,13 @@ export const addToCart = async (req: Request, res: Response) => {
       });
     }
 
-    // Get or create cart
-    let cart = await query(
-      'SELECT * FROM carts WHERE user_id = $1',
+    // Get or create cart (single upsert query)
+    const cart = await query(
+      `INSERT INTO carts (user_id) VALUES ($1)
+       ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+       RETURNING *`,
       [userId]
     );
-
-    if (cart.rows.length === 0) {
-      cart = await query(
-        'INSERT INTO carts (user_id) VALUES ($1) RETURNING *',
-        [userId]
-      );
-    }
 
     const cartId = cart.rows[0].id;
 

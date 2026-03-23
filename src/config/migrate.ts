@@ -49,6 +49,8 @@ CREATE INDEX IF NOT EXISTS idx_products_slug ON products(slug);
 CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
 CREATE INDEX IF NOT EXISTS idx_products_is_available ON products(is_available);
 CREATE INDEX IF NOT EXISTS idx_products_is_featured ON products(is_featured);
+CREATE INDEX IF NOT EXISTS idx_products_available_created ON products(is_available, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_products_available_featured ON products(is_available, is_featured);
 
 -- 4. CARTS
 CREATE TABLE IF NOT EXISTS carts (
@@ -101,6 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_payment_status ON orders(payment_status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_status_payment_created ON orders(status, payment_status, created_at DESC);
 
 -- 7. ORDER_ITEMS
 CREATE TABLE IF NOT EXISTS order_items (

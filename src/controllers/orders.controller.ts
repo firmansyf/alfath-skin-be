@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { query } from '../config/database';
+import { pool, query } from '../config/database';
 
 // Generate order number
 const generateOrderNumber = () => {
@@ -13,66 +13,50 @@ const generateOrderNumber = () => {
 
 // Create order from cart
 export const createOrder = async (req: Request, res: Response) => {
-  const client = await query('BEGIN');
-  
+  const client = await pool.connect();
+
   try {
     const userId = req.user?.userId;
-    const { 
-      recipient_name, 
-      phone, 
+    const {
+      recipient_name,
+      phone,
       shipping_address,
       shipping_cost = 0,
       customer_notes,
-      whatsapp_number 
+      whatsapp_number
     } = req.body;
 
-    // Validasi
     if (!recipient_name || !phone || !shipping_address) {
-      await query('ROLLBACK');
-      return res.status(400).json({ 
-        message: 'Data pengiriman wajib diisi' 
-      });
+      return res.status(400).json({ message: 'Data pengiriman wajib diisi' });
     }
 
-    // Get cart items
-    const cart = await query(
-      'SELECT id FROM carts WHERE user_id = $1',
+    await client.query('BEGIN');
+
+    // Get cart with items in one query
+    const cartItems = await client.query(
+      `SELECT ci.*, p.name, p.price, p.discount_price, p.image_url, p.stock, p.is_available
+       FROM carts c
+       JOIN cart_items ci ON ci.cart_id = c.id
+       JOIN products p ON ci.product_id = p.id
+       WHERE c.user_id = $1`,
       [userId]
     );
 
-    if (cart.rows.length === 0) {
-      await query('ROLLBACK');
-      return res.status(400).json({ message: 'Keranjang kosong' });
-    }
-
-    const cartId = cart.rows[0].id;
-
-    const cartItems = await query(
-      `SELECT ci.*, p.name, p.price, p.discount_price, p.image_url, p.stock, p.is_available
-       FROM cart_items ci
-       JOIN products p ON ci.product_id = p.id
-       WHERE ci.cart_id = $1`,
-      [cartId]
-    );
-
     if (cartItems.rows.length === 0) {
-      await query('ROLLBACK');
+      await client.query('ROLLBACK');
       return res.status(400).json({ message: 'Keranjang kosong' });
     }
 
     // Validate stock and availability
     for (const item of cartItems.rows) {
       if (!item.is_available) {
-        await query('ROLLBACK');
-        return res.status(400).json({ 
-          message: `Produk ${item.name} tidak tersedia` 
-        });
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: `Produk ${item.name} tidak tersedia` });
       }
-      
       if (item.stock < item.quantity) {
-        await query('ROLLBACK');
-        return res.status(400).json({ 
-          message: `Stok ${item.name} tidak cukup. Stok tersedia: ${item.stock}` 
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          message: `Stok ${item.name} tidak cukup. Stok tersedia: ${item.stock}`
         });
       }
     }
@@ -88,50 +72,62 @@ export const createOrder = async (req: Request, res: Response) => {
     const orderNumber = generateOrderNumber();
 
     // Create order
-    const orderResult = await query(
-      `INSERT INTO orders 
-       (user_id, order_number, recipient_name, phone, shipping_address, 
+    const orderResult = await client.query(
+      `INSERT INTO orders
+       (user_id, order_number, recipient_name, phone, shipping_address,
         subtotal, shipping_cost, total, customer_notes, whatsapp_number)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
-      [userId, orderNumber, recipient_name, phone, shipping_address, 
+      [userId, orderNumber, recipient_name, phone, shipping_address,
        subtotal, shipping_cost, total, customer_notes, whatsapp_number]
     );
 
     const order = orderResult.rows[0];
 
-    // Create order items and update stock
+    // Batch insert order items
+    const itemValues: any[] = [];
+    const itemParams: any[] = [];
+    let paramIdx = 1;
     for (const item of cartItems.rows) {
       const itemPrice = item.discount_price || item.price;
       const itemSubtotal = itemPrice * item.quantity;
-
-      await query(
-        `INSERT INTO order_items 
-         (order_id, product_id, product_name, product_image, price, quantity, subtotal, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [order.id, item.product_id, item.name, item.image_url, itemPrice, item.quantity, itemSubtotal, item.notes]
-      );
-
-      // Update product stock
-      await query(
-        'UPDATE products SET stock = stock - $1 WHERE id = $2',
-        [item.quantity, item.product_id]
-      );
+      itemValues.push(`($${paramIdx}, $${paramIdx+1}, $${paramIdx+2}, $${paramIdx+3}, $${paramIdx+4}, $${paramIdx+5}, $${paramIdx+6}, $${paramIdx+7})`);
+      itemParams.push(order.id, item.product_id, item.name, item.image_url, itemPrice, item.quantity, itemSubtotal, item.notes);
+      paramIdx += 8;
     }
+    await client.query(
+      `INSERT INTO order_items (order_id, product_id, product_name, product_image, price, quantity, subtotal, notes)
+       VALUES ${itemValues.join(', ')}`,
+      itemParams
+    );
 
-    // Clear cart
-    await query('DELETE FROM cart_items WHERE cart_id = $1', [cartId]);
+    // Batch update product stock
+    const stockValues = cartItems.rows.map((_, i) => `($${i * 2 + 1}::int, $${i * 2 + 2}::int)`).join(', ');
+    const stockParams: any[] = [];
+    cartItems.rows.forEach(item => stockParams.push(item.product_id, item.quantity));
+    await client.query(
+      `UPDATE products SET stock = products.stock - data.qty
+       FROM (VALUES ${stockValues}) AS data(pid, qty)
+       WHERE products.id = data.pid`,
+      stockParams
+    );
 
-    await query('COMMIT');
+    // Clear cart items
+    const cartId = cartItems.rows[0].cart_id;
+    await client.query('DELETE FROM cart_items WHERE cart_id = $1', [cartId]);
+
+    await client.query('COMMIT');
 
     res.status(201).json({
       message: 'Pesanan berhasil dibuat',
       data: order,
     });
   } catch (error) {
-    await query('ROLLBACK');
+    await client.query('ROLLBACK');
     console.error('Create order error:', error);
     res.status(500).json({ message: 'Terjadi kesalahan server' });
+  } finally {
+    client.release();
   }
 };
 
@@ -142,7 +138,7 @@ export const getUserOrders = async (req: Request, res: Response) => {
     const { status } = req.query;
 
     let queryText = `
-      SELECT o.*, 
+      SELECT o.*,
              COUNT(oi.id) as total_items
       FROM orders o
       LEFT JOIN order_items oi ON o.id = oi.order_id
@@ -170,34 +166,29 @@ export const getUserOrders = async (req: Request, res: Response) => {
   }
 };
 
-// Get order detail
+// Get order detail — single query with JSON aggregation
 export const getOrderDetail = async (req: Request, res: Response) => {
   try {
     const userId = req.user?.userId;
     const { id } = req.params;
 
-    const orderResult = await query(
-      'SELECT * FROM orders WHERE id = $1 AND user_id = $2',
+    const result = await query(
+      `SELECT o.*,
+              COALESCE(json_agg(oi.* ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') as items
+       FROM orders o
+       LEFT JOIN order_items oi ON o.id = oi.order_id
+       WHERE o.id = $1 AND o.user_id = $2
+       GROUP BY o.id`,
       [id, userId]
     );
 
-    if (orderResult.rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
     }
 
-    const order = orderResult.rows[0];
-
-    const itemsResult = await query(
-      'SELECT * FROM order_items WHERE order_id = $1',
-      [id]
-    );
-
     res.json({
       message: 'Detail pesanan berhasil diambil',
-      data: {
-        ...order,
-        items: itemsResult.rows,
-      },
+      data: result.rows[0],
     });
   } catch (error) {
     console.error('Get order detail error:', error);
@@ -207,60 +198,65 @@ export const getOrderDetail = async (req: Request, res: Response) => {
 
 // Cancel order (customer)
 export const cancelOrder = async (req: Request, res: Response) => {
-  const client = await query('BEGIN');
+  const client = await pool.connect();
 
   try {
     const userId = req.user?.userId;
     const { id } = req.params;
 
-    const orderResult = await query(
+    await client.query('BEGIN');
+
+    const orderResult = await client.query(
       'SELECT * FROM orders WHERE id = $1 AND user_id = $2',
       [id, userId]
     );
 
     if (orderResult.rows.length === 0) {
-      await query('ROLLBACK');
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
     }
 
     const order = orderResult.rows[0];
 
-    // Only pending orders can be cancelled
     if (order.status !== 'pending') {
-      await query('ROLLBACK');
-      return res.status(400).json({ 
-        message: 'Hanya pesanan dengan status pending yang bisa dibatalkan' 
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: 'Hanya pesanan dengan status pending yang bisa dibatalkan'
       });
     }
 
-    // Restore product stock
-    const items = await query(
+    // Batch restore product stock
+    const items = await client.query(
       'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
       [id]
     );
 
-    for (const item of items.rows) {
-      await query(
-        'UPDATE products SET stock = stock + $1 WHERE id = $2',
-        [item.quantity, item.product_id]
+    if (items.rows.length > 0) {
+      const stockValues = items.rows.map((_, i) => `($${i * 2 + 1}::int, $${i * 2 + 2}::int)`).join(', ');
+      const stockParams: any[] = [];
+      items.rows.forEach(item => stockParams.push(item.product_id, item.quantity));
+      await client.query(
+        `UPDATE products SET stock = products.stock + data.qty
+         FROM (VALUES ${stockValues}) AS data(pid, qty)
+         WHERE products.id = data.pid`,
+        stockParams
       );
     }
 
-    // Update order status
-    await query(
-      `UPDATE orders 
-       SET status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP
-       WHERE id = $1`,
+    await client.query(
+      `UPDATE orders SET status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP WHERE id = $1`,
       [id]
     );
 
-    await query('COMMIT');
+    await client.query('COMMIT');
 
     res.json({ message: 'Pesanan berhasil dibatalkan' });
   } catch (error) {
-    await query('ROLLBACK');
+    await client.query('ROLLBACK');
     console.error('Cancel order error:', error);
     res.status(500).json({ message: 'Terjadi kesalahan server' });
+  } finally {
+    client.release();
   }
 };
 
@@ -322,36 +318,29 @@ export const getAllOrders = async (req: Request, res: Response) => {
   }
 };
 
-// Admin: Get order detail
+// Admin: Get order detail — single query with JSON aggregation
 export const getOrderDetailAdmin = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const orderResult = await query(
-      `SELECT o.*, u.name as customer_name, u.email as customer_email
+    const result = await query(
+      `SELECT o.*, u.name as customer_name, u.email as customer_email,
+              COALESCE(json_agg(oi.* ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') as items
        FROM orders o
        LEFT JOIN users u ON o.user_id = u.id
-       WHERE o.id = $1`,
+       LEFT JOIN order_items oi ON o.id = oi.order_id
+       WHERE o.id = $1
+       GROUP BY o.id, u.name, u.email`,
       [id]
     );
 
-    if (orderResult.rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
     }
 
-    const order = orderResult.rows[0];
-
-    const itemsResult = await query(
-      'SELECT * FROM order_items WHERE order_id = $1',
-      [id]
-    );
-
     res.json({
       message: 'Detail pesanan berhasil diambil',
-      data: {
-        ...order,
-        items: itemsResult.rows,
-      },
+      data: result.rows[0],
     });
   } catch (error) {
     console.error('Get order detail admin error:', error);
@@ -374,7 +363,6 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
       updates.push(`status = $${paramCount}`);
       params.push(status);
 
-      // Update timestamp based on status
       if (status === 'confirmed') {
         updates.push(`confirmed_at = CURRENT_TIMESTAMP`);
       } else if (status === 'shipped') {

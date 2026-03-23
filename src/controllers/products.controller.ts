@@ -58,46 +58,21 @@ export const getProducts = async (req: Request, res: Response) => {
       queryText += ` ORDER BY p.${sortField} ${sortOrder}`;
     }
 
+    // Add total count via window function — single query instead of two
+    queryText = `SELECT *, COUNT(*) OVER() AS total_count FROM (${queryText}) sub`;
+
     // Pagination
     paramCount++;
     queryText += ` LIMIT $${paramCount}`;
     params.push(limit);
-    
+
     paramCount++;
     queryText += ` OFFSET $${paramCount}`;
     params.push(offset);
 
     const result = await query(queryText, params);
 
-    // Get total count
-    let countQuery = `
-      SELECT COUNT(*) 
-      FROM products p
-      LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.is_available = true
-    `;
-    
-    const countParams: any[] = [];
-    let countParamCount = 0;
-
-    if (category) {
-      countParamCount++;
-      countQuery += ` AND c.slug = $${countParamCount}`;
-      countParams.push(category);
-    }
-
-    if (featured === 'true') {
-      countQuery += ` AND p.is_featured = true`;
-    }
-
-    if (search) {
-      countParamCount++;
-      countQuery += ` AND (p.name ILIKE $${countParamCount} OR p.description ILIKE $${countParamCount})`;
-      countParams.push(`%${search}%`);
-    }
-
-    const countResult = await query(countQuery, countParams);
-    const totalItems = parseInt(countResult.rows[0].count);
+    const totalItems = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
     const totalPages = Math.ceil(totalItems / Number(limit));
 
     res.json({
@@ -349,6 +324,9 @@ export const getProductsAdmin = async (req: Request, res: Response) => {
       queryText += ` ORDER BY p.${sortField} ${sortOrder}`;
     }
 
+    // Add total count via window function — single query instead of two
+    queryText = `SELECT *, COUNT(*) OVER() AS total_count FROM (${queryText}) sub`;
+
     // Pagination
     paramCount++;
     queryText += ` LIMIT $${paramCount}`;
@@ -360,35 +338,7 @@ export const getProductsAdmin = async (req: Request, res: Response) => {
 
     const result = await query(queryText, params);
 
-    // Get total count
-    let countQuery = `
-      SELECT COUNT(*)
-      FROM products p
-      LEFT JOIN categories c ON p.category_id = c.id
-      WHERE 1=1
-    `;
-
-    const countParams: any[] = [];
-    let countParamCount = 0;
-
-    if (category) {
-      countParamCount++;
-      countQuery += ` AND p.category_id = $${countParamCount}`;
-      countParams.push(category);
-    }
-
-    if (is_available !== undefined && is_available !== '') {
-      countQuery += ` AND p.is_available = ${is_available === 'true'}`;
-    }
-
-    if (search) {
-      countParamCount++;
-      countQuery += ` AND (p.name ILIKE $${countParamCount} OR p.slug ILIKE $${countParamCount})`;
-      countParams.push(`%${search}%`);
-    }
-
-    const countResult = await query(countQuery, countParams);
-    const total = parseInt(countResult.rows[0].count);
+    const total = result.rows.length > 0 ? parseInt(result.rows[0].total_count) : 0;
 
     res.json({
       message: 'Data produk berhasil diambil',
