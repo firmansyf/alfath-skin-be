@@ -10,9 +10,10 @@ if (process.env.DATABASE_URL) {
   // Railway / production: use connection string
   poolConfig = {
     connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
     max: 20,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+    connectionTimeoutMillis: 10000,
   };
 } else {
   // Local development: use individual env vars
@@ -24,7 +25,7 @@ if (process.env.DATABASE_URL) {
     password: process.env.DB_PASSWORD,
     max: 20,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+    connectionTimeoutMillis: 10000,
   };
 }
 
