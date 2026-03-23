@@ -4,7 +4,6 @@ import {
   createOrder,
   getUserOrders,
   getOrderDetail,
-  getPaymentInfo,
   cancelOrder,
   getAllOrders,
   getOrderDetailAdmin,
@@ -18,7 +17,6 @@ const router = Router();
 router.post('/', authenticateToken, createOrder);
 router.get('/my-orders', authenticateToken, getUserOrders);
 router.get('/:id', authenticateToken, getOrderDetail);
-router.get('/:id/payment-info', authenticateToken, getPaymentInfo);
 router.post('/:id/cancel', authenticateToken, cancelOrder);
 
 // Admin routes

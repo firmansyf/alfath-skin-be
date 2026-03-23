@@ -1,44 +1,5 @@
 import { Request, Response } from 'express';
 import { query } from '../config/database';
-import { getPaymentInstructions, getPaymentDeadline } from '../config/payment.config';
-
-// Helper function to auto-expire order if payment deadline has passed
-const autoExpireOrder = async (order: any): Promise<boolean> => {
-  // Only process if order is pending and payment is pending
-  if (order.status !== 'pending' || order.payment_status !== 'pending') {
-    return false;
-  }
-
-  const deadline = getPaymentDeadline(order.created_at);
-  if (new Date() <= deadline) {
-    return false; // Not expired yet
-  }
-
-  // Auto-cancel order and set payment_status to expired
-  await query(
-    `UPDATE orders
-     SET status = 'cancelled',
-         payment_status = 'expired',
-         cancelled_at = CURRENT_TIMESTAMP
-     WHERE id = $1`,
-    [order.id]
-  );
-
-  // Restore product stock
-  const orderItems = await query(
-    'SELECT product_id, quantity FROM order_items WHERE order_id = $1',
-    [order.id]
-  );
-
-  for (const item of orderItems.rows) {
-    await query(
-      'UPDATE products SET stock = stock + $1 WHERE id = $2',
-      [item.quantity, item.product_id]
-    );
-  }
-
-  return true;
-};
 
 // Generate order number
 const generateOrderNumber = () => {
@@ -163,19 +124,9 @@ export const createOrder = async (req: Request, res: Response) => {
 
     await query('COMMIT');
 
-    // Generate payment instructions
-    const paymentInfo = getPaymentInstructions(
-      order.total,
-      order.order_number,
-      order.created_at
-    );
-
     res.status(201).json({
       message: 'Pesanan berhasil dibuat',
-      data: {
-        ...order,
-        payment_info: paymentInfo
-      },
+      data: order,
     });
   } catch (error) {
     await query('ROLLBACK');
@@ -225,7 +176,7 @@ export const getOrderDetail = async (req: Request, res: Response) => {
     const userId = req.user?.userId;
     const { id } = req.params;
 
-    let orderResult = await query(
+    const orderResult = await query(
       'SELECT * FROM orders WHERE id = $1 AND user_id = $2',
       [id, userId]
     );
@@ -234,18 +185,7 @@ export const getOrderDetail = async (req: Request, res: Response) => {
       return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
     }
 
-    let order = orderResult.rows[0];
-
-    // Check and auto-expire if needed
-    const wasExpired = await autoExpireOrder(order);
-    if (wasExpired) {
-      // Re-fetch order to get updated status
-      orderResult = await query(
-        'SELECT * FROM orders WHERE id = $1 AND user_id = $2',
-        [id, userId]
-      );
-      order = orderResult.rows[0];
-    }
+    const order = orderResult.rows[0];
 
     const itemsResult = await query(
       'SELECT * FROM order_items WHERE order_id = $1',
@@ -261,57 +201,6 @@ export const getOrderDetail = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Get order detail error:', error);
-    res.status(500).json({ message: 'Terjadi kesalahan server' });
-  }
-};
-
-// Get payment info for an order
-export const getPaymentInfo = async (req: Request, res: Response) => {
-  try {
-    const userId = req.user?.userId;
-    const { id } = req.params;
-
-    const orderResult = await query(
-      'SELECT id, order_number, total, status, payment_status, created_at FROM orders WHERE id = $1 AND user_id = $2',
-      [id, userId]
-    );
-
-    if (orderResult.rows.length === 0) {
-      return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
-    }
-
-    const order = orderResult.rows[0];
-
-    // Check if order is cancelled
-    if (order.status === 'cancelled') {
-      return res.status(400).json({ message: 'Order telah dibatalkan' });
-    }
-
-    // Check if payment is expired
-    if (order.payment_status === 'expired') {
-      return res.status(400).json({ message: 'Waktu pembayaran telah habis' });
-    }
-
-    // Only return payment info for pending payments
-    if (order.payment_status !== 'pending') {
-      return res.status(400).json({
-        message: 'Pembayaran sudah diproses',
-        payment_status: order.payment_status
-      });
-    }
-
-    const paymentInfo = getPaymentInstructions(
-      order.total,
-      order.order_number,
-      order.created_at
-    );
-
-    res.json({
-      message: 'Informasi pembayaran berhasil diambil',
-      data: paymentInfo
-    });
-  } catch (error) {
-    console.error('Get payment info error:', error);
     res.status(500).json({ message: 'Terjadi kesalahan server' });
   }
 };

@@ -25,15 +25,6 @@ export const upload = multer({
   },
 });
 
-// Reuse same multer config for QRIS
-export const uploadQris = multer({
-  storage,
-  fileFilter,
-  limits: {
-    fileSize: 5 * 1024 * 1024,
-  },
-});
-
 // Upload single product image to MinIO
 export const uploadProductImage = async (req: Request, res: Response) => {
   try {
@@ -83,39 +74,3 @@ export const deleteProductImage = async (req: Request, res: Response) => {
   }
 };
 
-// Upload QRIS image to MinIO
-export const uploadQrisImage = async (req: Request, res: Response) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ message: 'Tidak ada file yang diupload' });
-    }
-
-    const key = 'qris-code.png';
-
-    const imageUrl = await uploadToMinio(req.file.buffer, key, req.file.mimetype);
-
-    res.json({
-      message: 'QRIS berhasil diupload',
-      data: {
-        filename: key,
-        url: imageUrl,
-        size: req.file.size,
-        mimetype: req.file.mimetype,
-      },
-    });
-  } catch (error) {
-    console.error('Upload QRIS error:', error);
-    res.status(500).json({ message: 'Gagal mengupload QRIS' });
-  }
-};
-
-// Delete QRIS image from MinIO
-export const deleteQrisImage = async (req: Request, res: Response) => {
-  try {
-    await deleteFromMinio('qris-code.png');
-    res.json({ message: 'QRIS berhasil dihapus' });
-  } catch (error) {
-    console.error('Delete QRIS error:', error);
-    res.status(500).json({ message: 'Gagal menghapus QRIS' });
-  }
-};
