@@ -220,7 +220,11 @@ export const getOrderDetail = async (req: Request, res: Response) => {
 
     const result = await query(
       `SELECT o.*,
-              COALESCE(json_agg(oi.* ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') as items
+              COALESCE(json_agg(oi.* ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') as items,
+              COALESCE(
+                (SELECT json_agg(os.* ORDER BY os.display_order, os.id) FROM order_shipments os WHERE os.order_id = o.id),
+                '[]'
+              ) as shipments
        FROM orders o
        LEFT JOIN order_items oi ON o.id = oi.order_id
        WHERE o.id = $1 AND o.user_id = $2
@@ -507,7 +511,11 @@ export const getOrderDetailAdmin = async (req: Request, res: Response) => {
 
     const result = await query(
       `SELECT o.*, u.name as customer_name, u.email as customer_email,
-              COALESCE(json_agg(oi.* ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') as items
+              COALESCE(json_agg(oi.* ORDER BY oi.id) FILTER (WHERE oi.id IS NOT NULL), '[]') as items,
+              COALESCE(
+                (SELECT json_agg(os.* ORDER BY os.display_order, os.id) FROM order_shipments os WHERE os.order_id = o.id),
+                '[]'
+              ) as shipments
        FROM orders o
        LEFT JOIN users u ON o.user_id = u.id
        LEFT JOIN order_items oi ON o.id = oi.order_id
@@ -532,9 +540,11 @@ export const getOrderDetailAdmin = async (req: Request, res: Response) => {
 
 // Admin: Update order status
 export const updateOrderStatus = async (req: Request, res: Response) => {
+  const client = await pool.connect();
+
   try {
     const { id } = req.params;
-    const { status, payment_status, admin_notes, tracking_number, tracking_url } = req.body;
+    const { status, payment_status, admin_notes, shipments } = req.body;
 
     const updates: string[] = [];
     const params: any[] = [];
@@ -572,40 +582,72 @@ export const updateOrderStatus = async (req: Request, res: Response) => {
       params.push(admin_notes);
     }
 
-    if (tracking_number !== undefined) {
-      paramCount++;
-      updates.push(`tracking_number = $${paramCount}`);
-      params.push(tracking_number || null);
-    }
-
-    if (tracking_url !== undefined) {
-      paramCount++;
-      updates.push(`tracking_url = $${paramCount}`);
-      params.push(tracking_url || null);
-    }
-
-    if (updates.length === 0) {
+    if (updates.length === 0 && shipments === undefined) {
       return res.status(400).json({ message: 'Tidak ada data yang diupdate' });
     }
 
-    paramCount++;
-    params.push(id);
+    await client.query('BEGIN');
 
-    const result = await query(
-      `UPDATE orders SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
-      params
-    );
+    let order;
+    if (updates.length > 0) {
+      paramCount++;
+      params.push(id);
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+      const result = await client.query(
+        `UPDATE orders SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`,
+        params
+      );
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+      }
+      order = result.rows[0];
+    } else {
+      const result = await client.query('SELECT * FROM orders WHERE id = $1', [id]);
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+      }
+      order = result.rows[0];
     }
+
+    // Replace shipments (resi) list wholesale when provided
+    if (Array.isArray(shipments)) {
+      await client.query('DELETE FROM order_shipments WHERE order_id = $1', [id]);
+
+      const validShipments = shipments.filter(
+        (s: any) => s && (s.product_name || s.tracking_number || s.tracking_url)
+      );
+
+      if (validShipments.length > 0) {
+        const shipmentValues: string[] = [];
+        const shipmentParams: any[] = [];
+        let idx = 1;
+        validShipments.forEach((s: any, i: number) => {
+          shipmentValues.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4})`);
+          shipmentParams.push(id, s.product_name || null, s.tracking_number || null, s.tracking_url || null, i);
+          idx += 5;
+        });
+        await client.query(
+          `INSERT INTO order_shipments (order_id, product_name, tracking_number, tracking_url, display_order)
+           VALUES ${shipmentValues.join(', ')}`,
+          shipmentParams
+        );
+      }
+    }
+
+    await client.query('COMMIT');
 
     res.json({
       message: 'Status pesanan berhasil diupdate',
-      data: result.rows[0],
+      data: order,
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('Update order status error:', error);
     res.status(500).json({ message: 'Terjadi kesalahan server' });
+  } finally {
+    client.release();
   }
 };

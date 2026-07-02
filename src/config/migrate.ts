@@ -133,6 +133,23 @@ CREATE INDEX IF NOT EXISTS idx_orders_status_payment_created ON orders(status, p
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number VARCHAR(100);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_url VARCHAR(500);
 
+-- 6a. ORDER_SHIPMENTS (multiple resi/tracker per order, e.g. one per product/package)
+CREATE TABLE IF NOT EXISTS order_shipments (
+    id SERIAL PRIMARY KEY,
+    order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    product_name VARCHAR(255),
+    tracking_number VARCHAR(100),
+    tracking_url VARCHAR(500),
+    display_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_order_shipments_order_id ON order_shipments(order_id);
+-- One-time backfill from the old single tracking_number/tracking_url columns
+INSERT INTO order_shipments (order_id, tracking_number, tracking_url)
+SELECT o.id, o.tracking_number, o.tracking_url FROM orders o
+WHERE (o.tracking_number IS NOT NULL OR o.tracking_url IS NOT NULL)
+AND NOT EXISTS (SELECT 1 FROM order_shipments os WHERE os.order_id = o.id);
+
 -- 7. ORDER_ITEMS
 CREATE TABLE IF NOT EXISTS order_items (
     id SERIAL PRIMARY KEY,
