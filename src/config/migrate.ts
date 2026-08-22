@@ -277,6 +277,50 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 14. BLOGS
+CREATE TABLE IF NOT EXISTS blogs (
+    id SERIAL PRIMARY KEY,
+
+    title VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) NOT NULL UNIQUE,
+
+    author VARCHAR(255),
+    category VARCHAR(100),
+
+    excerpt TEXT,
+    content TEXT NOT NULL,
+
+    featured_image VARCHAR(500),
+
+    tags TEXT[] DEFAULT '{}',
+
+    status VARCHAR(20) NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'published', 'archived')),
+
+    published_at TIMESTAMP,
+
+    view_count INTEGER NOT NULL DEFAULT 0,
+
+    -- SEO
+    seo_title VARCHAR(255),
+    seo_description TEXT,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_blogs_slug
+    ON blogs(slug);
+
+CREATE INDEX IF NOT EXISTS idx_blogs_status
+    ON blogs(status);
+
+CREATE INDEX IF NOT EXISTS idx_blogs_published_at
+    ON blogs(published_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_blogs_status_published
+    ON blogs(status, published_at DESC);
 `;
 
 export const runMigrations = async (): Promise<void> => {
